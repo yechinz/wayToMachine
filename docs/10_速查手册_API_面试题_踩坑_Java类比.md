@@ -5,6 +5,11 @@
 
 ---
 
+> **怎么读本手册（30 秒）**
+> - **它是什么**：随手查 / 面试前突击 / 现场排错的速查表，**不是用来背的，也不是教材**。按 §0 的状态表直接跳到对应节，不要顺读。
+> - **代号与行号**：`S-xx` / `T-xx` / `W` / `P0–P2` / `P1–P7` 见 [`02` §1 代号词典](./02_ToStudyList拆解_知识体系与自测清单.md)；全库 `:nnn` 一律指 `../机器视觉学习路线图.md` 的行号，**看不懂可跳过**。
+> - **版本口径**：本手册 API 以本机 `cv2.__doc__` 为准；4.x 旧教程里的 contrib / 返回值说法按 `12` 号手册当兼容性阅读处理。
+
 ## 0. 一页纸使用说明
 
 | 你现在的状态 | 翻到 |
@@ -36,7 +41,7 @@
 | 连通域 | `connectedComponentsWithStats` | `stats[i]` = `[x,y,w,h,area]`；索引 0 是背景 |
 | 几何 | `warpAffine/warpPerspective/getRotationMatrix2D/warpPolar` | 仿射 3 点、透视 4 点；`warpPolar` 拉直环形件 |
 | 模板 | `matchTemplate` + `minMaxLoc` | `TM_CCOEFF_NORMED` 取最大值；`TM_SQDIFF*` 取最小值 |
-| 特征 | `ORB_create/SIFT_create/BFMatcher/findHomography` | SIFT 需 contrib；`findHomography(..., cv2.RANSAC, 3.0)` |
+| 特征 | `ORB_create/SIFT_create/BFMatcher/findHomography` | 5.0 主包自带 SIFT（旧教程「需 contrib」已过时，见 `12` §3）；`findHomography(..., cv2.RANSAC, 3.0)` |
 | 标定 | `findChessboardCorners/cornerSubPix/calibrateCamera` | 15–30 张不同姿态；RMS < 0.5px |
 | 校正 | `initUndistortRectifyMap` + `remap` | 实时视频预生成映射表，别每帧 `undistort` |
 | 拟合 | `fitLine/fitEllipse/HoughLinesP/HoughCircles` | `fitEllipse` 至少 5 点；`DIST_HUBER` 抗离群 |
@@ -90,7 +95,7 @@ print("连通域:", n - 1, "轮廓:", len(cnts),
 
 | # | 坑 | 对策 |
 |---|---|---|
-| 9 | 不学 C# | P7 必做，70% 现场软件是 C# |
+| 9 | 不学 C# | 项目 P7 必做，70% 现场软件是 C# |
 | 10 | 不学 C++ | 看懂、能改、能调用即可 |
 | 11 | 忽视光学/机械基础 | 景深、畸变、远心、安装刚度 |
 | 12 | 不做工程化 | 参数外置、日志、异常、配置 |
@@ -138,7 +143,7 @@ print("连通域:", n - 1, "轮廓:", len(cnts),
 | 20 | 过杀率与漏检率权衡 | 此消彼长；产线更怕漏检（客诉召回），但过杀高会被弃用；**阈值是商务问题，写进验收标准** |
 
 **加分题（`:838`）速记**：
-- YOLO loss ≈ 分类损失 + 框回归（CIoU/DFL）+ 置信度；anchor-free 直接预测中心/边界偏移，省掉锚框超参。
+- YOLO loss ≈ 分类损失 + 框回归（CIoU 完整交并比损失 / DFL 分布焦点损失）+ 置信度；anchor-free（无锚框）直接预测中心/边界偏移，省掉锚框超参。
 - PatchCore 只用良品：建正常特征记忆库，推理看最近邻距离，因为 NG 样本稀少且形态不可枚举。
 - ONNX 部署流程：训练 → 导出（固定/动态 batch、opset）→ ORT/OpenVINO/TensorRT → NCHW/RGB/归一化对齐 → 计时验收。
 - 节拍优化顺序：ROI → 降采样 → LUT/向量化 → 多线程 → 硬件。
@@ -194,7 +199,7 @@ GR&R       同一工件测 30 次，标准差 ≤ 公差带 10%
 # 环境
 conda activate industrial_vision
 python -c "import cv2,numpy; print(cv2.__version__, numpy.__version__)"
-pip install -i https://pypi.tuna.tsinghua.edu.cn/simple opencv-contrib-python PySide6 pyyaml
+pip install -i https://pypi.tuna.tsinghua.edu.cn/simple opencv-python==5.0.0.93 PySide6 pyyaml
 
 # 训练 / 导出（无 GPU 用小配置）
 pip install ultralytics onnxruntime anomalib
@@ -216,7 +221,7 @@ git add -A && git commit -m "P3: min_area 50->80，因低角度打光后噪点�
 | 现象 / 报错 | 最可能原因 | 处置 |
 |---|---|---|
 | `!_src.empty() in function 'cvtColor'` | `imread` 返回 None（路径/中文/格式） | 用 `imdecode(np.fromfile(...))`，见 `03` §3.4 |
-| `AttributeError: module 'cv2' has no attribute 'SIFT_create'` | 装的是主包不是 contrib | 卸载主包重装 contrib；或回退 ORB（`03` §1.4） |
+| `AttributeError: module 'cv2' has no attribute 'SIFT_create'` | **5.0 主包自带 SIFT**；出现该报错多为装了 `headless` / 旧版包，或多包共存 | 先 `pip list` 确认只装一个 opencv 包且版本 5.0.0.93，再 `print(cv2.__file__)` 看实际导入路径；旧教程「重装 contrib」在 5.0 已不适用（`12` §3） |
 | `findContours` 解包报错 | 3.x/4.x/5.x 返回值数量不同 | 统一 `cv2.findContours(...)[-2]` |
 | `adaptiveThreshold` 断言失败 | `blockSize` 为偶数或 ≤1 | 取奇数 ≥3 |
 | 阈值后一片白/一片黑 | 阈值方向反了 / 光照不均 | 换 `_INV`；改自适应阈值；**先查打光** |
