@@ -87,7 +87,7 @@
 | 本地源码 | **5.1-dev（5.x 分支快照）** | `README.md:7` → `docs.opencv.org/5.x/`；`docs_sphinx/conf.py:27` 为 `release = "5.1"`；`modules\` 有 `geometry/calib/stereo/ptcloud` 拆分 |
 | 官网渲染文档 | **5.0**（新版 URL 结构） | `https://docs.opencv.org/5.0/py_tutorials/py_tutorials.html`；首页 `https://docs.opencv.org/5.0/` |
 | 你机器上的 cv2 | **opencv-python 5.0.0.93**（conda `industrial_vision`，Python 3.11.17，NumPy 2.4.6，无 GPU） | 实测 `cv2.__version__`；系统默认 `python` 无 cv2，**必须先进 conda 环境** |
-| 路线图 v1.0 | 按 **4.x** 写 | `机器视觉学习路线图.md:7`（"OpenCV 4.13"）、`:864-865`（`docs.opencv.org/4.x/`、`d6/d00/tutorial_py_root.html`） |
+| 路线图 | **原按 4.x 写，2026-11-11 已对齐 5.0** | `机器视觉学习路线图.md:7`（头部注明"初版按 4.13 写，现已按 5.0.0.93 对齐"）、`:864-866`（已换 `docs.opencv.org/5.0/` 等）；`.md` 与 `.docx` 已同步 |
 
 **已实测修正（2026-11-11）**：上一版曾推测 `imgproc.hpp:2170` 的 `hint` 参数可能不在 5.0.0 里，**这是错的**。本机实测 `cv2.warpAffine.__doc__` 第一行就是
 `warpAffine(src, M, dsize[, dst[, flags[, borderMode[, borderValue[, hint]]]]]) -> dst`，
