@@ -245,3 +245,174 @@ git add -A && git commit -m "P3: min_area 50->80，因低角度打光后噪点�
 | 周复盘 / 季度回顾模板 | [`00 总览 §8`](./00_学习手册总览_路线与使用方法.md) |
 
 > 最后一条：**这本速查手册不是用来背的，是用来"卡住时 30 秒内定位问题"的。** 真正的掌握来自 `01` 号清单里那些被勾掉的 `[x]`。
+
+
+---
+
+## 9. Q&A 补充 · `cap.read()` 的 `ret` 是什么（Q07 / 2026-11-12）
+
+> **为什么放在末尾**：本节按 `13` 号 Q&A 规则追加。不插进 §1 API 速查表，是为了不挤偏本手册已有的行号引用（`docs/10:34/220` 等）。
+> **路径约定（重要）**：本节形如 `videoio.hpp:1025`、`cap.cpp:551` 的行号，指的是**本地源码仓库** `E:/Proj/pythonProject/opencv-5.x`，不是路线图行号；全库裸 `:nnn` 才指 `../机器视觉学习路线图.md`。
+> **实测环境**：conda `industrial_vision` → `opencv-python 5.0.0.93` / Python 3.11.17 / NumPy 2.4.6，无摄像头，用 `VideoWriter` 合成的临时 AVI 做可复现实验。
+
+### 9.1 结论先行（30 秒）
+
+`ret` 是 **return value** 的缩写，一个 `bool`。`cap.read()` 一次返回 **两个值**：
+
+| 位置 | 习惯命名 | 类型 | 含义 |
+|---|---|---|---|
+| 第 1 个 | `ret` / `ok` / `success` | `bool` | 本次**是否真的拿到一帧非空图像** |
+| 第 2 个 | `frame` | `np.ndarray` 或 `None` | 这一帧的 BGR 像素数组，形状 `(H, W, 3)`，`uint8` |
+
+`ret, frame = cap.read()` 不是 OpenCV 专有语法，就是 **Python 的元组解包**：`read()` 返回 `(retval, image)`，证据是 `cv2.VideoCapture.read.__doc__` 首行 `read([, image]) -> retval, image`。
+
+**一句话作用**：`ret` 是「这一帧能不能用」的开关。不检查它，视频读完或相机掉线的那一刻，程序就会把 `None` 传给 `cv2.cvtColor` 直接崩溃。
+
+### 9.2 三个作用：为什么每个循环都要写 `if not ret: break`
+
+| # | 场景 | `ret` 在管什么 | 不检查会怎样 |
+|---|---|---|---|
+| 1 | 视频文件读到末尾（EOF） | 循环的正常终止条件 | 无限循环处理 `None`，或抛出 `-215` 断言错误 |
+| 2 | 工业相机断线 / 瞬时坏帧 | 采集链路的健康信号 | 缺陷检测静默跑空帧，可能漏检、误发 OK 信号给 PLC |
+| 3 | 设备根本没打开 | 兜底：仍返回 `(False, None)`，**不抛异常** | 以为在采集，实际一帧没拿到，排查半天 |
+
+官方标准写法见本地 `doc/py_tutorials/py_gui/py_video_display/py_video_display.markdown:33-38`：先 `isOpened()`，再 `ret, frame = cap.read()`，紧跟 `if not ret: break`，之后才做 `cvtColor` / `imshow`。
+
+### 9.3 底层原理：`ret` 判的其实不是 `grab()` 成功
+
+头文件注释（`videoio.hpp:1014-1025`）说得很直白：`read()` = `grab()` + `retrieve()` 的组合；返回 `false` 的两种典型原因是**相机已断开**或**文件里没有更多帧**，此时返回空图像。
+
+关键在实现（`cap.cpp:551-561`）：
+
+```cpp
+bool VideoCapture::read(OutputArray image)
+{
+    CV_INSTRUMENT_REGION();
+    if (grab())
+    {
+        retrieve(image);      // 注意：retrieve() 的返回值被丢弃了
+    } else {
+        image.release();
+    }
+    return !image.empty();    // ← ret 的真实来源
+}
+```
+
+**推导一步一步来**：
+
+1. `grab()` 只负责「从设备/解码器抢下一帧」，成功与否看 `cap.cpp:524-533`。
+2. `retrieve()` 负责「解码并写进 `image`」，它自己也返回 `bool`（`cap.cpp:535-548`），但 `read()` **没接这个返回值**。
+3. 所以 `read()` 最后返回的是 `!image.empty()` —— **判定对象是「最终图像是否非空」，不是「抓取动作是否成功」**。
+4. 结论：日常把 `ret` 理解成「成功拿到一帧」没问题，但精确到源码，它是「拿到了一张非空图」。这也是多通道 / 特殊后端下可能出现 `grab=True` 却 `read=False` 的原因。
+
+> 顺带对齐 `11` 号四层阅读法：这口井是「官网教程说 false → 头文件注释解释为什么 → 实现揭示真实判据」的典型例子，光看文档看不到第 3 步。
+
+### 9.4 本机 5.0.0 实测（可复现）
+
+用 `VideoWriter` 写 3 帧纯色 AVI，再连续读 6 次；另测不存在的摄像头 `VideoCapture(9999)`。
+
+| # | 场景 | `ret` | `frame` |
+|---|---|---|---|
+| 1 | 读第 1–3 帧 | `True` | `ndarray(48, 64, 3)`，均值 0 / 60 / 120 |
+| 2 | 第 4 次（EOF） | `False` | **`None`** |
+| 3 | 继续读第 5、6 次 | `False` | `None`（不会自动重绕） |
+| 4 | 设备不存在，`isOpened()=False` | `False` | `None`，**不抛异常** |
+| 5 | 拿到 `frame=None` 直接 `cvtColor` | — | `error: (-215:Assertion failed) !_src.empty() in function 'cv::cvtColor'` |
+| 6 | EOF 后 `cap.set(cv2.CAP_PROP_POS_FRAMES, 0)` | 返回 `True`，但下次 `read()` 仍 `False` | `None` |
+| 7 | EOF 后 `cap.open(path)` 重新打开 | `True` | 正常帧 |
+| 8 | `cap.setExceptionMode(True)` 后失败 | 抛 `cv2.error`（`cap.cpp:530`） | — |
+
+**最容易踩的一条**：`ret=False` 时 Python 侧拿到的是 **`None`**，不是形状 `(0,0,3)` 的空数组、更不是全零图。因为 C++ 的空 `cv::Mat` 经绑定转换后变成 `None`。所以 `frame.shape`、`frame.copy()` 也都会 `AttributeError`。
+
+### 9.5 两套可直接复制的写法
+
+**A. 读视频文件 —— `False` 就是正常结束，退出即可**（对应 `01` 号 T1-24「无摄像头时读 mp4 保证可复现」）
+
+```python
+import cv2
+
+cap = cv2.VideoCapture("data/raw/inspect.mp4")
+if not cap.isOpened():                 # 先查设备/文件是否打开
+    raise RuntimeError("打不开视频文件")
+
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        break                          # EOF，正常收尾
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    # ... 你的检测逻辑
+
+cap.release()
+```
+
+**B. 工业相机 —— 一次 `False` 不等于断线，要容错 + 重连**（对应 `09` 号 §3 采集线程、W41–44 的 8 小时压测）
+
+```python
+MISS_LIMIT = 5                         # 连续失败多少帧才判掉线
+miss = 0
+cap = cv2.VideoCapture(0)
+
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        miss += 1
+        if miss < MISS_LIMIT:
+            continue                   # 容忍偶发坏帧
+        cap.release()
+        cap = cv2.VideoCapture(0)      # 关键：重新 open
+        if not cap.isOpened():         # seek(POS_FRAMES,0) 对相机无意义
+            raise RuntimeError("相机断线，重连失败 → 通知上位机 / PLC 停机")
+        miss = 0
+        continue
+    miss = 0
+    # ... 处理 frame
+```
+
+> **顺带（Q07 附带发现）**：`09` 号 §3 `:293-296` 的 `AsyncCapture._loop` 里是 `ok, frame = self.cap.read(); if not ok: self.stopped = True; break` —— `ok` 就是 `ret`，但**一帧失败就永久停线程、且不重连**。产线相机瞬时掉帧会静默停采集，与 W41–44 的 8 小时压测要求不符，建议按上面的 B 改。已在 `09` §11 加交叉引用。
+
+### 9.6 5.0 的另一种风格：用异常代替返回值
+
+`videoio.hpp:1067` 有 `CV_WRAP void setExceptionMode(bool enable)`，本机实测 `cv2.VideoCapture.setExceptionMode` 可用：
+
+```python
+cap = cv2.VideoCapture(0)
+cap.setExceptionMode(True)   # 之后失败不再返回 False，而是抛 cv2.error
+ret, frame = cap.read()      # 失败时直接抛异常（报在 cap.cpp:530）
+```
+
+这更接近 Java 的 `try/catch` 习惯。**但本项目现有代码（`09` 号）统一用 `ret` 判断，不要两种风格混用**；想用就得整条采集链路一起改。
+
+### 9.7 Java → Python 对照
+
+| OpenCV Python | Java 里的对应物 | 差别 |
+|---|---|---|
+| `ret, frame = cap.read()` | `Optional<Mat> r = cap.read(); if (r.isPresent())` | Python 一次调用把「状态 + 数据」打包成元组返回 |
+| `ret == False` | `BufferedReader.readLine() == null` | 都是「流结束」的信号，但 OpenCV 额外给个显式 bool |
+| `ret` 作循环条件 | `Iterator.hasNext()` | `hasNext()` 先问再取；`read()` 是取完顺带告诉你成没成 |
+| `frame is None` | 方法返回 `null` | Java 里 `null` 调方法报 NPE；Python 里传 `None` 给 cv2 报 `-215` 断言 |
+| `setExceptionMode(True)` | 抛受检异常 + `try/catch` | 把错误从「返回值」挪到「控制流」 |
+
+### 9.8 反常识 / 易错点清单
+
+| # | 坑 | 正解 |
+|---|---|---|
+| 1 | 「`ret` 就是 `grab()` 的返回值」 | 错。是 `!image.empty()`，`retrieve()` 的返回值被丢掉了（`cap.cpp:551-561`） |
+| 2 | 「`ret=False` 时 `frame` 是空数组或全黑图」 | 是 `None`。判断要用 `if not ret`，别用 `frame.size == 0` |
+| 3 | 「打不开摄像头 `read()` 会报错」 | 不会，照样 `(False, None)`；循环前必须 `isOpened()` |
+| 4 | 「EOF 后 `set(POS_FRAMES, 0)` 能重播」 | 实测返回 `True` 但读不回来，必须 `release()` + `open()` |
+| 5 | 「`ret=True` 说明这帧画面没问题」 | 它只保证拿到非空图；过曝、模糊、运动拖影一律不管，那是检测算法的事 |
+| 6 | 「视频文件和相机可以共用一套失败处理」 | 文件 EOF 该正常退出；相机才要容错重连，别把视频写成无限循环播放 |
+
+### 9.9 自测题（S-27 增补，答案全在本节）
+
+| 题 | 问什么 | 答案位置 |
+|---|---|---|
+| 1 | `ret` 是 `grab()` 的返回值吗？源码到底判的是什么？ | §9.3 |
+| 2 | `ret=False` 时 `frame` 是什么？直接传给 `cvtColor` 报什么错？ | §9.4 |
+| 3 | 视频 EOF 后想重播，`set(CAP_PROP_POS_FRAMES, 0)` 够不够？ | §9.4 / §9.5 |
+| 4 | 相机掉线为什么不能一帧 `False` 就停机？ | §9.5 B |
+| 5 | 视频文件与工业相机的失败处理为什么不能共用一套？ | §9.8 #6 |
+
+**过关线**：按 `02` §1 的 1–5 分自评，**≥4 分**＝能不看文档讲清「ret 判的是非空图」「frame 是 None」「-215 断言」「重开而非 seek」四点。
+
+**关联编号**：`S-27`（VideoCapture / 帧率 / 缓冲 / 抓图，`02` §6）、`T1-21` / `T1-24`（`01` §W6）、`W6` 视频与相机、`09` §3 采集并发与节拍优化；交叉引用见 `09` §11、`02` §16，台账见 `13` §4 Q07。
